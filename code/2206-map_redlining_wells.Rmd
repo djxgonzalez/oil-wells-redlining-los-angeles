@@ -1,0 +1,258 @@
+---
+title: "Redlining and oil wells in Los Angeles"
+author: David J.X. González, PhD
+output: 
+  html_document:
+    theme: darkly
+---
+
+### Introduction
+
+Operating oil and gas wells in neighborhoods exposes residents to [air](https://doi.org/10.1016/j.scitotenv.2021.150298), [noise](http://dx.doi.org/10.1016/j.scitotenv.2016.11.118), and [water](http://dx.doi.org/10.1021/acs.est.1c02056) pollution. Racially marginalized people have disproportionately [high exposure](https://www.ehn.org/environmental-justice-oil-and-gas-2657292130/redlining-and-environmental-injustice) to wells and their health may be more impacted with exposure to wells. However, the processes that led to these disparities are not well understood.  We can use data from historical maps to get a better understanding of how environmental injustices have come about. 
+
+In a study published in the *[Journal of Exposure Science and Environmental Epidemiology](https://doi.org/10.1038/s41370-022-00434-9)*, my colleagues and I investigated whether racially discriminatory maps made by the federal Home Owners Loan Corporation (HOLC) in the 1930s were associated with higher exposure to oil and gas wells. Neighborhoods that HOLC officials considered most “desirable” received a grade of A and were shaded green on HOLC maps; grade B neighborhoods were described as “still desirable” and shaded blue; C-graded neighborhoods (“definitely declining”) were shaded yellow; and D-graded neighborhoods (“hazardous”) were shaded red (i.e., redlined). You can learn more about these maps from the University of Richmond's [Mapping Inequality Project](https://dsl.richmond.edu/panorama/redlining/). In our study, we found that in similar neighborhoods that received different HOLC grades, the neighborhoods with worse grades had significantly more wells. The density of wells in redlined neighborhoods was two times higher than the density in "desirable" neighborhoods. Neighborhoods that were redlined in the 1930s still have persistent health and social inequities, partly due to ongoing pollution from oil wells and other sources.
+
+### Map
+
+Use the map to explore the data for environmental justice, redlining, and oil and gas wells.
+
+
+```{r include=FALSE, setup}
+# attaches packages ----------------------------------------------------------
+library("leaflet")
+library("sf")
+library("tidyverse")
+library("viridis")
+
+# defines global variables ---------------------------------------------------
+# makes a "not in" operator, the inverse of %in%
+"%!in%" <- function(x,y)!("%in%"(x,y))
+
+# coordinate reference system (CRS) for the project
+# unprojected CRS, NAD83, for geographic data
+crs_nad83 <- st_crs("+init=epsg:4269 +proj=longlat +ellps=GRS80
+                        +datum=NAD83 +no_defs +towgs84=0,0,0")  
+# projected CRS, for creating buffers
+#crs_projected <- st_crs("+proj=utm +datum=WGS84") 
+crs_projected <- st_crs("+proj=utm +zone=11 +datum=WGS84")
+```
+
+```{r include=FALSE, data_input_prep}
+la_wells_100m <- readRDS("../data/cal_gem/wells_interim.rds") %>%
+  filter(county_name == "Los Angeles") %>%
+  filter(well_status %in% c("Active", "Idle", "New", "Plugged")) %>%
+  filter(well_type   %in% c("GAS", "GS", "INJ", "OG")) %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = crs_nad83) %>%
+  st_transform(crs_projected) %>%
+  st_buffer(dist = 100) %>%
+  st_union() %>%
+  st_transform(crs_nad83)
+la_ces4_25th <- st_read("../data/calenviroscreen40shp_F_2021/ces4_final.shp") %>%
+  as_tibble() %>%
+  filter(CIscoreP <= 25) %>%
+  filter(City_1 == "Los Angeles") %>%
+  select(Tract, geometry) %>% 
+  st_as_sf() %>%
+  st_transform(crs_nad83)
+la_ces4_75th <- st_read("../data/calenviroscreen40shp_F_2021/ces4_final.shp") %>%
+  as_tibble() %>%
+  filter(CIscoreP >= 75) %>%
+  filter(City_1 == "Los Angeles") %>%
+  select(Tract, geometry) %>% 
+  st_as_sf() %>%
+  st_transform(crs_nad83)
+la_ces4_90th <- st_read("../data/calenviroscreen40shp_F_2021/ces4_final.shp") %>%
+  as_tibble() %>%
+  filter(CIscoreP >= 90) %>%
+  filter(City_1 == "Los Angeles") %>%
+  select(Tract, geometry) %>% 
+  st_as_sf() %>%
+  st_transform(crs_nad83)
+la_holc_a <- 
+  st_read("../data/univ_richmond/mapping_inequality/shapefile/holc_ad_data.shp") %>%
+  as_tibble() %>%
+  filter(city == "Los Angeles") %>%
+  filter(holc_grade == "A") %>% 
+  st_as_sf() %>%
+  st_transform(crs_nad83)
+la_holc_b <- 
+  st_read("../data/univ_richmond/mapping_inequality/shapefile/holc_ad_data.shp") %>%
+  as_tibble() %>%
+  filter(city == "Los Angeles") %>%
+  filter(holc_grade == "B") %>% 
+  st_as_sf() %>%
+  st_transform(crs_nad83)
+la_holc_c <- 
+  st_read("../data/univ_richmond/mapping_inequality/shapefile/holc_ad_data.shp") %>%
+  as_tibble() %>%
+  filter(city == "Los Angeles") %>%
+  filter(holc_grade == "C") %>% 
+  st_as_sf() %>%
+  st_transform(crs_nad83)
+la_holc_d <- 
+  st_read("../data/univ_richmond/mapping_inequality/shapefile/holc_ad_data.shp") %>%
+  as_tibble() %>%
+  filter(city == "Los Angeles") %>%
+  filter(holc_grade == "D") %>% 
+  st_as_sf() %>%
+  st_transform(crs_nad83)
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+map <- leaflet(width = "100%") %>%
+
+  # adds grayscale basemap
+  addProviderTiles(providers$CartoDB.Positron) %>%
+
+  # 100 m buffer around wells ..............................................
+  addPolygons(data         = la_wells_100m,
+              weight       = 1,
+              color        = "black",
+              fillColor    = "black",
+              fill         = TRUE,
+              fillOpacity  = 0.7,
+              stroke       = FALSE,
+              dashArray    = c(5,5),
+              smoothFactor = 3,
+              options      = pathOptions(clickable = F),
+              group        = "Wells - 100 m buffer") %>%
+
+  # CalEnviroScreen 4 ......................................................
+
+  # adds 25th percentile CES
+  addPolygons(data         = la_ces4_25th,
+              weight       = 1,
+              color        = "white",
+              fillColor    = "orange",
+              fill         = TRUE,
+              fillOpacity  = 0.1,
+              stroke       = TRUE,
+              dashArray    = c(5,5),
+              smoothFactor = 3,
+              options      = pathOptions(clickable = F),
+              group        = "CalEnviroScreen < 25%") %>%
+
+  # adds 75th percentile CES
+  addPolygons(data         = la_ces4_75th,
+              weight       = 1,
+              color        = "white",
+              fillColor    = "purple",
+              fill         = TRUE,
+              fillOpacity  = 0.2,
+              stroke       = TRUE,
+              dashArray    = c(5,5),
+              smoothFactor = 3,
+              options      = pathOptions(clickable = F),
+              group        = "CalEnviroScreen > 75%") %>%
+
+  # adds 90th percentile CES
+  addPolygons(data         = la_ces4_90th,
+              weight       = 1,
+              color        = "white",
+              fillColor    = "purple",
+              fill         = TRUE,
+              fillOpacity  = 0.4,
+              stroke       = TRUE,
+              dashArray    = c(5,5),
+              smoothFactor = 3,
+              options      = pathOptions(clickable = F),
+              group        = "CalEnviroScreen > 90%") %>%
+
+  # HOLC grades ....................................................
+  addPolygons(data         = la_holc_a,
+              weight       = 1,
+              color        = "green",
+              fillColor    = "green",
+              fill         = TRUE,
+              fillOpacity  = 0.5,
+              stroke       = FALSE,
+              dashArray    = c(5,5),
+              smoothFactor = 3,
+              options      = pathOptions(clickable = F),
+              group        = "HOLC - A-graded neighborhoods") %>%
+
+  addPolygons(data         = la_holc_b,
+              weight       = 1,
+              color        = "blye",
+              fillColor    = "blue",
+              fill         = TRUE,
+              fillOpacity  = 0.5,
+              stroke       = FALSE,
+              dashArray    = c(5,5),
+              smoothFactor = 3,
+              options      = pathOptions(clickable = F),
+              group        = "HOLC - B-graded neighborhoods") %>%
+
+  addPolygons(data         = la_holc_c,
+              weight       = 1,
+              color        = "yellow",
+              fillColor    = "yellow",
+              fill         = TRUE,
+              fillOpacity  = 0.5,
+              stroke       = FALSE,
+              dashArray    = c(5,5),
+              smoothFactor = 3,
+              options      = pathOptions(clickable = F),
+              group        = "HOLC - C-graded neighborhoods") %>%
+
+  addPolygons(data         = la_holc_d,
+              weight       = 1,
+              color        = "red",
+              fillColor    = "red",
+              fill         = TRUE,
+              fillOpacity  = 0.5,
+              stroke       = FALSE,
+              dashArray    = c(5,5),
+              smoothFactor = 3,
+              options      = pathOptions(clickable = F),
+              group        = "HOLC - D-graded neighborhoods") %>%
+
+  # other parameters .......................................................
+
+  # adds measurement tool
+  addMeasure(primaryLengthUnit   = "miles",
+             secondaryLengthUnit = "kilometers",
+             primaryAreaUnit     = "acres",
+             secondaryAreaUnit   = "hectares",
+             position            = "topleft") %>%
+
+  # add layers control
+  addLayersControl(
+    overlayGroups = c("Wells - 100 m buffer",
+                      "HOLC - A-graded neighborhoods",
+                      "HOLC - B-graded neighborhoods",
+                      "HOLC - C-graded neighborhoods",
+                      "HOLC - D-graded neighborhoods",
+                      "CalEnviroScreen < 25%",
+                      "CalEnviroScreen > 75%",
+                      "CalEnviroScreen > 90%"),
+    options = layersControlOptions(collapsed = FALSE),
+    position = "topright") %>%
+
+  # list groups to hide on startup
+  hideGroup(c("HOLC - A-graded neighborhoods",
+              "HOLC - B-graded neighborhoods",
+              "HOLC - C-graded neighborhoods",
+              "CalEnviroScreen < 25%",
+              "CalEnviroScreen > 90%")) %>%
+
+  # adds scale bar
+  addScaleBar(position = "topright") %>%
+
+  # sets viewer and zoom level
+  setView(lng = -118.30, lat = 33.95, zoom = 10)
+
+# displays map
+map
+```
+
+
+### Data
+
+The map data came from three sources:
+
+- Data on oil and gas wells came from the [California Geologic Energy Management Division (CalGEM)](https://www.conservation.ca.gov/calgem/Online_Data). I made a 100-meter (328-foot) buffer around the wells to show areas nearby the wells.
+- Historical data on redlining came from the [Mapping Inequality Project](https://dsl.richmond.edu/panorama/redlining/)
+- Present-day data on environmental justice came from [CalEnviroScreen 4.0](https://oehha.ca.gov/calenviroscreen/report/calenviroscreen-40), a tool developed by the California Environmental Protection Agency to identify disadvantaged communities that are disproportionately impacted by pollution. Neighborhoods with a CalEnviroScreen score > 75% are considered disadvantaged, and neighborhoods with score > 90% are highly disadvtanged. You can compare disadvantaged communities with advantaged communities that had a CalEnviroScreen score < 25%.
+
